@@ -67,6 +67,6 @@ namespace LiveSPICE
         public string[] AudioOutputs { get { return This("AudioOutputs", new string[0]); } set { this["AudioOutputs"] = value; } }
 
         [UserScopedSetting]
-        public MessageType LogVerbosity { get { return This("LogVerbosity", MessageType.Info); } set { this["LogVerbosity"] = value; } }
+        public MessageType LogVerbosity { get { return This("LogVerbosity", MessageType.Verbose); } set { this["LogVerbosity"] = value; } }
     }
 }

@@ -172,6 +172,13 @@
                                                     Value="{Binding ElementName=_this, Path=OutputGain, Converter={StaticResource dBConverter}}" Minimum="-40" Maximum="40" />
                                         </DockPanel>
                                         <ItemsControl Margin="3" ItemsSource="{Binding ElementName=_this, Path=OutputChannels}" />
+                                        <StackPanel Orientation="Vertical">
+                                            <TextBlock Text="Impulse response"
+                                                       FontWeight="Bold"/>
+                                            <TextBlock Text="{Binding SelectedImpulse}"/>
+                                            <CheckBox IsChecked="{Binding Bypass, Mode=TwoWay}"></CheckBox>
+                                            <Button HorizontalAlignment="Stretch">Select</Button>
+                                        </StackPanel>
                                     </StackPanel>
                                 </ScrollViewer>
                             </xcad:LayoutAnchorable>

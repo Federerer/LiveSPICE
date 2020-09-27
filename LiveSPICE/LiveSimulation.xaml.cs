@@ -19,6 +19,12 @@ using Xceed.Wpf.AvalonDock.Layout;
 using ComputerAlgebra;
 using ComputerAlgebra.LinqCompiler;
 using Util;
+using System.Diagnostics;
+using System.IO;
+using Audio;
+using System.Numerics;
+using Vector = System.Numerics.Vector;
+using SignalProcessing;
 
 namespace LiveSPICE
 {
@@ -80,12 +86,20 @@ namespace LiveSPICE
 
         private Dictionary<ComputerAlgebra.Expression, Channel> inputs = new Dictionary<ComputerAlgebra.Expression, Channel>();
 
+        public string SelectedImpulse { get; set; } = "orange_2_mics.wav";
+
+        public bool Bypass { get; set; }
+
+        private FIRFilter _fir;
+
         public LiveSimulation(Circuit.Schematic Simulate, Audio.Device Device, Audio.Channel[] Inputs, Audio.Channel[] Outputs)
         {
             try
             {
                 InitializeComponent();
-                
+
+                this.DataContext = this;
+
                 // Make a clone of the schematic so we can mess with it.
                 Circuit.Schematic clone = Circuit.Schematic.Deserialize(Simulate.Serialize(), Log);
                 clone.Elements.ItemAdded += OnElementAdded;
@@ -240,6 +254,14 @@ namespace LiveSPICE
                     OutputChannels.Add(c);
                 }
 
+                double[] impulseL = null;
+
+                var wavFile = new WavFile(SelectedImpulse);
+
+                wavFile.readData(ref impulseL);
+
+                _fir = new FIRFilter(impulseL);
+
 
                 // Begin audio processing.
                 if (Inputs.Any() || Outputs.Any())
@@ -272,8 +294,8 @@ namespace LiveSPICE
                         simulation = new Circuit.Simulation(solution)
                         {
                             Log = Log,
-                            Input = inputs.Keys,
-                            Output = probes.Select(i => i.V).Concat(OutputChannels.Select(i => i.Signal)),
+                            Input = inputs.Keys.ToArray(),
+                            Output = probes.Select(i => i.V).Concat(OutputChannels.Select(i => i.Signal)).ToArray(),
                             Oversample = Oversample,
                             Iterations = Iterations,
                         };
@@ -305,8 +327,8 @@ namespace LiveSPICE
                             simulation = new Circuit.Simulation(s)
                             {
                                 Log = Log,
-                                Input = inputs.Keys,
-                                Output = probes.Select(i => i.V).Concat(OutputChannels.Select(i => i.Signal)),
+                                Input = inputs.Keys.ToArray(),
+                                Output = probes.Select(i => i.V).Concat(OutputChannels.Select(i => i.Signal)).ToArray(),
                                 Oversample = Oversample,
                                 Iterations = Iterations,
                             };
@@ -377,11 +399,20 @@ namespace LiveSPICE
                 List<double[]> outs = new List<double[]>(probes.Count + Out.Length);
                 foreach (Probe i in probes)
                     outs.Add(i.AllocBuffer(Count));
+                    
                 for (int i = 0; i < Out.Length; ++i)
                     outs.Add(Out[i].LockSamples(false, true));
 
                 // Process the samples!
                 simulation.Run(Count, ins, outs);
+
+                if (!Bypass)
+                {
+                    foreach (var @out in outs)
+                    {
+                        _fir.ProcessSamples(@out);
+                    }
+                }
 
                 // Show the samples on the oscilloscope.
                 long clock = Scope.Signals.Clock;
@@ -446,7 +477,7 @@ namespace LiveSPICE
                 {
                     probes.Add(probe);
                     if (simulation != null)
-                        simulation.Output = probes.Select(i => i.V).Concat(OutputChannels.Select(i => i.Signal));
+                        simulation.Output = probes.Select(i => i.V).Concat(OutputChannels.Select(i => i.Signal)).ToArray();
                 }
             }
         }
@@ -461,7 +492,7 @@ namespace LiveSPICE
                 {
                     probes.Remove(probe);
                     if (simulation != null)
-                        simulation.Output = probes.Select(i => i.V).Concat(OutputChannels.Select(i => i.Signal));
+                        simulation.Output = probes.Select(i => i.V).Concat(OutputChannels.Select(i => i.Signal)).ToArray();
                 }
             }
         }
@@ -540,4 +571,187 @@ namespace LiveSPICE
         }
         public event PropertyChangedEventHandler PropertyChanged;
     }
+
+    class WavFile
+    {
+        public int samplesPerSecond { get; set; }
+        public int samplesTotalCount { get; set; }
+        public string wavFilename { get; private set; }
+        public byte[] metaData { get; set; }
+
+
+        public WavFile(string filename)
+        {
+            samplesTotalCount = samplesPerSecond = -1;
+            wavFilename = filename;
+            metaData = null;
+        }
+
+
+        /// <summary>
+        /// Reading all samples of a 16-bit stereo wav file into arrays.
+        /// </summary>
+
+        public bool readData(ref double[] L)
+        {
+            try
+            {
+                BinaryReader reader = new BinaryReader(File.Open(wavFilename, FileMode.Open));
+
+                // header (8 + 4 bytes):
+
+                byte[] riffId = reader.ReadBytes(4);    // "RIFF"
+                int fileSize = reader.ReadInt32();      // size of entire file
+                byte[] typeId = reader.ReadBytes(4);    // "WAVE"
+
+                if (Encoding.ASCII.GetString(typeId) != "WAVE") return false;
+
+                // chunk 1 (8 + 16 or 18 bytes):
+
+                byte[] fmtId = reader.ReadBytes(4);     // "fmt "
+                int fmtSize = reader.ReadInt32();       // size of chunk in bytes
+                int fmtCode = reader.ReadInt16();       // 1 - for PCM
+                int channels = reader.ReadInt16();      // 1 - mono, 2 - stereo
+                int sampleRate = reader.ReadInt32();    // sample rate per second
+                int byteRate = reader.ReadInt32();      // bytes per second
+                int dataAlign = reader.ReadInt16();     // data align
+                int bitDepth = reader.ReadInt16();      // 8, 16, 24, 32, 64 bits
+
+                if (fmtCode != 1) return false;     // not PCM
+                if (channels != 1) return false;    // only Mono files in this version
+                if (bitDepth != 24) return false;   // only 16-bit in this version
+
+                if (fmtSize == 18) // fmt chunk can be 16 or 18 bytes
+                {
+                    int fmtExtraSize = reader.ReadInt16();  // read extra bytes size
+                    reader.ReadBytes(fmtExtraSize);         // skip over "INFO" chunk
+                }
+
+                // chunk 2 (8 bytes):
+
+                byte[] dataId = reader.ReadBytes(4);    // "data"
+                int dataSize = reader.ReadInt32();      // size of audio data
+
+                var ascii = Encoding.ASCII.GetString(dataId);
+
+                //Debug.Assert(ascii == "data", "Data chunk not found!");
+
+                while (ascii != "data")
+                {
+                    reader.ReadBytes(dataSize);
+
+                    dataId = reader.ReadBytes(4);    // "data"
+                    dataSize = reader.ReadInt32();      // size of audio data
+                    ascii = Encoding.ASCII.GetString(dataId);
+                }
+
+                samplesPerSecond = sampleRate;                  // sample rate (usually 44100)
+                samplesTotalCount = dataSize / (bitDepth / 8);  // total samples count in audio data
+
+                // audio data:
+
+                L = new double[samplesTotalCount / channels];
+
+                for (int i = 0, s = 0; i < samplesTotalCount; i += 3)
+                {
+                    var b1 = reader.ReadByte();
+                    var b2 = reader.ReadByte();
+                    var b3 = reader.ReadByte();
+                    int res = b1 | (b2 << 8) | (sbyte)b3 << 16;
+                    L[s] = res/(double)(1 << (bitDepth - 1));
+                    s++;
+                }
+
+                // metadata:
+
+                long moreBytes = reader.BaseStream.Length - reader.BaseStream.Position;
+
+                if (moreBytes > 0)
+                {
+                    metaData = reader.ReadBytes((int)moreBytes);
+                }
+
+                reader.Close();
+            }
+            catch(Exception e)
+            {
+                Debug.Fail("Failed to read file.");
+                return false;
+            }
+
+            return true;
+        }
+
+
+        /// <summary>
+        /// Writing all 16-bit stereo samples from arrays into wav file.
+        /// </summary>
+
+        public bool writeData(double[] L, double[] R)
+        {
+            Debug.Assert((samplesTotalCount != -1) && (samplesPerSecond != -1),
+                "No sample count or sample rate info!");
+
+            try
+            {
+                BinaryWriter writer = new BinaryWriter(File.Create(wavFilename));
+
+                int fileSize = 44 + samplesTotalCount * 2;
+
+                if (metaData != null)
+                {
+                    fileSize += metaData.Length;
+                }
+
+                // header:
+
+                writer.Write(Encoding.ASCII.GetBytes("RIFF"));  // "RIFF"
+                writer.Write((Int32)fileSize);                  // size of entire file with 16-bit data
+                writer.Write(Encoding.ASCII.GetBytes("WAVE"));  // "WAVE"
+
+                // chunk 1:
+
+                writer.Write(Encoding.ASCII.GetBytes("fmt "));  // "fmt "
+                writer.Write((Int32)16);                        // size of chunk in bytes
+                writer.Write((Int16)1);                         // 1 - for PCM
+                writer.Write((Int16)2);                         // only Stereo files in this version
+                writer.Write((Int32)samplesPerSecond);          // sample rate per second (usually 44100)
+                writer.Write((Int32)(4 * samplesPerSecond));    // bytes per second (usually 176400)
+                writer.Write((Int16)4);                         // data align 4 bytes (2 bytes sample stereo)
+                writer.Write((Int16)16);                        // only 16-bit in this version
+
+                // chunk 2:
+
+                writer.Write(Encoding.ASCII.GetBytes("data"));  // "data"
+                writer.Write((Int32)(samplesTotalCount * 2));   // size of audio data 16-bit
+
+                // audio data:
+
+                for (int i = 0, s = 0; i < samplesTotalCount; i += 2)
+                {
+                    writer.Write(Convert.ToInt16(L[s]));
+                    writer.Write(Convert.ToInt16(R[s]));
+                    s++;
+                }
+
+                // metadata:
+
+                if (metaData != null)
+                {
+                    writer.Write(metaData);
+                }
+
+                writer.Flush();
+                writer.Close();
+            }
+            catch
+            {
+                Debug.Fail("Failed to write file.");
+                return false;
+            }
+
+            return true;
+        }
+    }
+    
 }

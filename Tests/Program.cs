@@ -9,6 +9,7 @@ using ComputerAlgebra.LinqCompiler;
 using ComputerAlgebra.Plotting;
 using Circuit;
 using Util;
+using System.Diagnostics;
 
 // Filter design tool: http://sim.okawa-denshi.jp/en/CRtool.php
 
@@ -83,12 +84,13 @@ namespace Tests
 
         public double Run(Circuit.Circuit C, Func<double, double> Vin, Expression Input, IEnumerable<Expression> Plots)
         {
-            long a = Timer.Counter;
+            //long a = Timer.Counter;
+            var sw = Stopwatch.StartNew();
 
             Analysis analysis = C.Analyze();
             TransientSolution TS = TransientSolution.Solve(analysis, (Real)1 / (SampleRate * Oversample), Log);
 
-            analysisTime += Timer.Delta(a);
+            analysisTime += sw.ElapsedMilliseconds;
 
             Simulation S = new Simulation(TS) 
             { 
@@ -96,18 +98,17 @@ namespace Tests
                 Iterations = Iterations,
                 Log = Log, 
                 Input = new[] { Input },
-                Output = Plots,
+                Output = Plots.ToArray(),
             };
 
             Log.WriteLine("");
-            if (Samples > 0)
-                return RunTest(
+            return Samples > 0
+                ? RunTest(
                     C, S,
                     Vin,
                     Samples,
-                    C.Name);
-            else
-                return 0.0;
+                    C.Name)
+                : 0.0;
         }
 
         public double RunTest(Circuit.Circuit C, Simulation S, Func<double, double> Vin, int Samples, string Name)
@@ -129,9 +130,9 @@ namespace Tests
                 for (int n = 0; n < N; ++n, t += T)
                     input[n] = Vin(t);
 
-                long a = Timer.Counter;
+                var sw = Stopwatch.StartNew();
                 S.Run(input, buffers);
-                time += Timer.Delta(a);
+                time += sw.Elapsed.TotalSeconds;
 
                 for (int i = 0; i < S.Output.Count(); ++i)
                     output[i].AddRange(buffers[i]);

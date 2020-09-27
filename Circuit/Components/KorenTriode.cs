@@ -38,14 +38,14 @@ namespace Circuit
         [Serialize]
         public Quantity Vg { get { return vg; } set { if (vg.Set(value)) NotifyChanged("Vg"); } }
 
-        protected override void Analyze(Analysis Mna, Expression Vpk, Expression Vgk, out Expression Ip, out Expression Ig)
+        protected override void Analyze(Analysis Mna, Expression Vgk, Expression Vpk, out Expression Ip, out Expression Ig)
         {
-            Expression ex = Kp * (1.0 / Mu + Vgk * (Kvb + Vpk * Vpk) ^ (-0.5));
+            Expression ex = (Kp * (1.0 / Mu + Vgk * Binary.Power(Kvb + Vpk * Vpk, -0.5)));
 
             // ln(1+e^x) = x for large x, and large x causes numerical issues.
-            Expression E1 = Call.If(ex > 5, ex, Call.Ln(1 + LinExp(ex))) * Vpk / Kp;
-
-            Ip = Call.If(E1 > 0, (E1 ^ Ex) / Kg, 0);
+            Expression E1 = Call.If(ex > 5, Call.Min(ex, 20), Call.If(ex < -5, 0, Call.Ln(1 + LinExp(ex)))) * Vpk / Kp;
+            //Expression E1 = Call.Ln(1 + LinExp(ex)) * Vpk / Kp;
+            Ip = Call.If(E1 > 0, (E1 ^ Ex) * 2 / Kg, 0);
             Ig = Call.If(Vgk > Vg, (Vgk - Vg) / Rgk, 0);
         }
     }
