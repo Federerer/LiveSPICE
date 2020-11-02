@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Numerics;
+using MathNet.Numerics.IntegralTransforms;
 
 namespace LiveSPICE
 {
@@ -50,7 +51,7 @@ namespace LiveSPICE
         {
             Complex[] data = DecimateSignal(Samples, Decimate);
             int N = data.Length;
-            MathNet.Numerics.IntegralTransforms.Transform.FourierForward(data);
+            Fourier.Forward(data);
             // Zero the DC bin.
             data[0] = 0.0;
 

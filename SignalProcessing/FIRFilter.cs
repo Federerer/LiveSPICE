@@ -19,7 +19,7 @@ namespace SignalProcessing
 
             _filterLength = 620; //coefs.Length + (_simdLen - (coefs.Length % _simdLen));
             impulseResponse = new double[_filterLength];
-            System.Array.Copy(coefs.Take(_filterLength).Reverse().ToArray(), 0, impulseResponse, 0, Math.Min(coefs.Length, _filterLength));
+            Array.Copy(coefs.Take(_filterLength).Reverse().ToArray(), 0, impulseResponse, 0, Math.Min(coefs.Length, _filterLength));
             delayLine = new double[_filterLength*2];
         }
 

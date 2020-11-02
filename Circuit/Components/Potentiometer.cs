@@ -49,7 +49,7 @@ namespace Circuit
         // IPotControl
         double IPotControl.PotValue { get { return Wipe; } set { Wipe = value; } }
 
-        protected SweepType sweep = SweepType.Linear;
+        protected SweepType sweep;
         [Serialize, Description("Sweep progression of this potentiometer.")]
         public SweepType Sweep { get { return sweep; } set { sweep = value; NotifyChanged("Sweep"); } }
         

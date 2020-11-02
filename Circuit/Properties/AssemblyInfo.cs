@@ -37,6 +37,6 @@ using System.Security;
 [assembly: AssemblyFileVersion("1.0.0.0")]
 
 
-[assembly: AllowPartiallyTrustedCallers]
-[assembly: SecurityTransparent]
-[assembly: SecurityRules(SecurityRuleSet.Level2, SkipVerificationInFullTrust = true)]
+//[assembly: AllowPartiallyTrustedCallers]
+//[assembly: SecurityTransparent]
+//[assembly: SecurityRules(SecurityRuleSet.Level2, SkipVerificationInFullTrust = true)]

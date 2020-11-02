@@ -47,37 +47,15 @@ namespace Circuit.Components
         [Serialize]
         public Quantity Ig0 { get { return ig0; } set { ig0 = value; NotifyChanged(nameof(Ig0)); } }
 
-
-
-
         protected override void Analyze(Analysis Mna, Expression Vgk, Expression Vpk, out Expression ip, out Expression ig)
         {
-            ig = Call.If(Vgk > -5, Gg * Binary.Power(Call.Ln(1 + LinExp(Cg * Vgk)) / Cg, Xi), 0) + Ig0;
+            var tmp = Cg * Vgk;
+            ig = Call.If(Vgk > -5, Gg * Binary.Power(Call.If(tmp < 5, Call.Ln(1 + LinExp(tmp)), tmp) / Cg, Xi), 0) + Ig0;
 
-            Expression ex = C * (Vpk / Mu + Vgk);
-            var ik =  Call.If(ex > -10, G * Binary.Power(Call.Ln(1 + LinExp(ex)) / C, Gamma), 0);
+            Expression ex = C * ((Vpk / Mu) + Vgk);
+            var ik =  Call.If(ex > -5, G * Binary.Power(Call.If(ex < 5, Call.Ln(1 + LinExp(ex)), ex) / C, Gamma), 0);
 
             ip = ik - ig;
         }
-
-        //public override void Analyze(Analysis Mna)
-        //{
-        //    Expression Vpk = Mna.AddUnknownEqualTo(Name + "pk", Plate.V - Cathode.V);
-        //    Expression Vgk = Mna.AddUnknownEqualTo(Name + "gk", Grid.V - Cathode.V);
-
-        //    Expression ig = Gg * Binary.Power(Call.Ln(1 + LinExp(Cg * Vgk)) / Cg, Xi) + Ig0;
-        //    Expression ik = G * Binary.Power(Call.Ln(1 + Call.Exp(C * (1.0 / Mu * Vpk + Vgk))) / C, Gamma);
-        //    Expression ia = ik - ig;
-
-        //    //ik = Mna.AddUnknownEqualTo("i" + Name + "k", ik);
-        //    //ia = Mna.AddUnknownEqualTo("i" + Name + "p", ia);
-        //    //ig = Mna.AddUnknownEqualTo("i" + Name + "g", ig);
-
-
-        //    Mna.AddTerminal(Grid, ig);
-        //    Mna.AddTerminal(Cathode, -ik);
-        //    Mna.AddTerminal(Plate, ia);
-
-        //}
     }
 }

@@ -232,7 +232,7 @@ namespace Circuit
         {
             IEnumerable<Equal> eqs = equations.Concat(context.Equations);
             Equal eq = eqs.FirstOrDefault(i => Component.IsDependentVariable(i.Left, Component.t) && i.Right.Equals(Eq));
-            if (ReferenceEquals(eq, null))
+            if (eq is null)
             {
                 Expression x = AddUnknown(Name);
                 AddEquation(x, Eq);

@@ -41,12 +41,12 @@ namespace LiveSPICE
 
         private static Dictionary<Type, KeyGesture[]> ShortcutKeys = new Dictionary<Type, KeyGesture[]>()
         {
-            { typeof(Circuit.Conductor), new[] { new KeyGesture(Key.W, ModifierKeys.Control) } },
-            { typeof(Circuit.Ground), new[] { new KeyGesture(Key.G, ModifierKeys.Control) } },
-            { typeof(Circuit.Resistor), new[] { new KeyGesture(Key.R, ModifierKeys.Control) } },
-            { typeof(Circuit.Capacitor), new[] { new KeyGesture(Key.F, ModifierKeys.Control) } },
-            { typeof(Circuit.Inductor), new[] { new KeyGesture(Key.L, ModifierKeys.Control), new KeyGesture(Key.H, ModifierKeys.Control) } },
-            { typeof(Circuit.Label), new[] { new KeyGesture(Key.T, ModifierKeys.Control) } },
+            { typeof(Circuit.Conductor), new[] { new KeyGesture(Key.W, ModifierKeys.None) } },
+            { typeof(Circuit.Ground), new[] { new KeyGesture(Key.G, ModifierKeys.None) } },
+            { typeof(Circuit.Resistor), new[] { new KeyGesture(Key.R, ModifierKeys.None) } },
+            { typeof(Circuit.Capacitor), new[] { new KeyGesture(Key.F, ModifierKeys.None) } },
+            { typeof(Circuit.Inductor), new[] { new KeyGesture(Key.L, ModifierKeys.None) } },
+            { typeof(Circuit.Label), new[] { new KeyGesture(Key.T, ModifierKeys.None) } },
         };
 
         private Category root = new Category();

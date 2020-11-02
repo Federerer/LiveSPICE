@@ -45,8 +45,8 @@ namespace LiveSPICE
             else
                 dc.DrawLine(WirePen, new Point(0, 0), new Point(ActualWidth, ActualHeight));
             
-            ElementControl.DrawTerminal(dc, ToPoint(wire.A - wire.LowerBound), wire.Anode.ConnectedTo != null);
-            ElementControl.DrawTerminal(dc, ToPoint(wire.B - wire.LowerBound), wire.Cathode.ConnectedTo != null);
+            DrawTerminal(dc, ToPoint(wire.A - wire.LowerBound), wire.Anode.ConnectedTo != null);
+            DrawTerminal(dc, ToPoint(wire.B - wire.LowerBound), wire.Cathode.ConnectedTo != null);
 
             dc.Pop();
         }

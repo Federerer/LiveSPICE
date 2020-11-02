@@ -31,7 +31,7 @@ namespace Asio
         public override double SampleRate { get { return sampleRate; } }
 
         private AsioObject asio;
-        private Audio.Stream.SampleHandler callback;
+        private Audio.Stream.SampleHandler _callback;
         private Buffer[] input;
         private Buffer[] output;
 
@@ -56,7 +56,7 @@ namespace Asio
             for (int i = 0; i < output.Length; ++i)
                 b[i] = output[i].Samples;
 
-            callback(buffer, a, b, sampleRate);
+            _callback(buffer, a, b, sampleRate);
 
             for (int i = 0; i < output.Length; ++i)
             {
@@ -103,7 +103,7 @@ namespace Asio
             Log.Global.WriteLine(MessageType.Info, "Instantiating ASIO stream with {0} input channels and {1} output channels.", Input.Length, Output.Length);
             asio = new AsioObject(DeviceId);
             asio.Init(IntPtr.Zero);
-            callback = Callback;
+            _callback = Callback;
 
             buffer = asio.BufferSize.Preferred;
             ASIOBufferInfo[] infos = new ASIOBufferInfo[Input.Length + Output.Length];

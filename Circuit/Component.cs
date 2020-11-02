@@ -8,6 +8,7 @@ using System.Xml.Linq;
 using System.Reflection;
 using ComputerAlgebra;
 using Util;
+using System.Runtime.CompilerServices;
 
 namespace Circuit
 {
@@ -167,11 +168,8 @@ namespace Circuit
         public override string ToString() { return TypeName + " " + Name; }
 
         // INotifyPropertyChanged interface.
-        protected void NotifyChanged(string p)
-        {
-            if (PropertyChanged != null)
-                PropertyChanged(this, new PropertyChangedEventArgs(p));
-        }
+        protected void NotifyChanged([CallerMemberName] string p = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(p));
+
         public event PropertyChangedEventHandler PropertyChanged;
 
         // This is too useful not to have.

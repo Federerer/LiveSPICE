@@ -17,6 +17,11 @@ using FastExpressionCompiler;
 using ExpressionToCodeLib;
 using System.Security.Permissions;
 using System.Security;
+using System.Collections.Specialized;
+using System.Numerics;
+using DelegateHostAssembly;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace Circuit
 {
@@ -41,15 +46,16 @@ namespace Circuit
     /// </summary>
     public class Simulation
     {
+
         protected static readonly Variable t = TransientSolution.t;
         protected Expression t0 { get { return t - Solution.TimeStep; } }
         protected Arrow t_t0 { get { return Arrow.New(t, t0); } }
 
-        private long n = 0;
+        private long _n = 0;
         /// <summary>
         /// Get which sample the simulation is at.
         /// </summary>
-        public long At { get { return n; } }
+        public long At { get { return _n; } }
         /// <summary>
         /// Get the simulation time.
         /// </summary>
@@ -58,7 +64,7 @@ namespace Circuit
         /// <summary>
         /// Get the timestep for the simulation.
         /// </summary>
-        public double TimeStep { get { return (double)(Solution.TimeStep * oversample); } }
+        public double TimeStep { get { return (double)(Solution.TimeStep * _oversample); } }
 
         private ILog log = new NullLog();
         /// <summary>
@@ -67,52 +73,59 @@ namespace Circuit
         public ILog Log { get { return log; } set { log = value; } }
 
         private TransientSolution solution;
+        private readonly bool _vectorize;
+
         /// <summary>
         /// Solution of the circuit we are simulating.
         /// </summary>
-        public TransientSolution Solution 
-        { 
+        public TransientSolution Solution
+        {
             get { return solution; }
             set { solution = value; InvalidateProcess(); }
         }
 
-        private int oversample = 8;
+        private int _oversample = 8;
         /// <summary>
         /// Oversampling factor for this simulation.
         /// </summary>
-        public int Oversample { get { return oversample; } set { oversample = value; InvalidateProcess(); } }
+        public int Oversample { get { return _oversample; } set { _oversample = value; InvalidateProcess(); } }
 
-        private int iterations = 8;
+        private int _iterations = 8;
         /// <summary>
         /// Maximum number of iterations allowed for the simulation to converge.
         /// </summary>
-        public int Iterations { get { return iterations; } set { iterations = value; InvalidateProcess(); } }
+        public int Iterations { get { return _iterations; } set { _iterations = value; InvalidateProcess(); } }
 
         /// <summary>
         /// The sampling rate of this simulation, the sampling rate of the transient solution divided by the oversampling factor.
         /// </summary>
-        public Expression SampleRate { get { return 1 / (Solution.TimeStep * oversample); } }
+        public Expression SampleRate { get { return 1 / (Solution.TimeStep * _oversample); } }
 
-        private Expression[] input = new Expression[] { };
+        private Expression[] _inputs = new Expression[] { };
         /// <summary>
         /// Expressions representing input samples.
         /// </summary>
-        public Expression[] Input { get { return input; } set { input = value; InvalidateProcess(); } }
+        public Expression[] Inputs { get { return _inputs; } set { _inputs = value; InvalidateProcess(); } }
 
-        private Expression[] output = new Expression[] { };
+        private Expression[] _outputs = new Expression[] { };
         /// <summary>
         /// Expressions for output samples.
         /// </summary>
-        public Expression[] Output { get { return output; } set { output = value; InvalidateProcess(); } }
-        
+        public Expression[] Outputs { get { return _outputs; } set { _outputs = value; InvalidateProcess(); } }
+
         // Stores any global state in the simulation (previous state values, mostly).
-        private Dictionary<Expression, GlobalExpr<double>> globals = new Dictionary<Expression, GlobalExpr<double>>();
+        private readonly Dictionary<Expression, GlobalExpr<double>> _globals = new Dictionary<Expression, GlobalExpr<double>>();
+
         // Add a new global and set it to 0 if it didn't already exist.
         private void AddGlobal(Expression Name)
         {
-            if (!globals.ContainsKey(Name))
-                globals.Add(Name, new GlobalExpr<double>(0.0));
+            if (!_globals.ContainsKey(Name))
+                _globals.Add(Name, new GlobalExpr<double>(0.0));
         }
+
+
+        private double[] _state;
+        private double[] _initialState;
 
         /// <summary>
         /// Create a simulation using the given solution and the specified inputs/outputs.
@@ -120,20 +133,30 @@ namespace Circuit
         /// <param name="Solution">Transient solution to run.</param>
         /// <param name="Input">Expressions in the solution to be defined by input samples.</param>
         /// <param name="Output">Expressions describing outputs to be saved from the simulation.</param>
-        public Simulation(TransientSolution Solution)
+        public Simulation(TransientSolution Solution, Expression[] inputs, Expression[] outputs, int oversample, int iterations)
         {
             solution = Solution;
-            
+            _inputs = inputs;
+            _outputs = outputs;
+            _oversample = oversample;
+            _iterations = iterations;
+
+
             // If any system depends on the previous value of an unknown, we need a global variable for it.
             foreach (Expression i in Solution.Solutions.SelectMany(i => i.Unknowns))
+            {
                 if (Solution.Solutions.Any(j => j.DependsOn(i.Evaluate(t, t0))))
+                {
                     AddGlobal(i.Evaluate(t, t0));
+                }
+            }
+
             // Also need globals for any Newton's method unknowns.
             foreach (Expression i in Solution.Solutions.OfType<NewtonIteration>().SelectMany(i => i.Unknowns))
                 AddGlobal(i.Evaluate(t, t0));
 
             // Set the global values to the initial conditions of the solution.
-            foreach (KeyValuePair<Expression, GlobalExpr<double>> i in globals)
+            foreach (KeyValuePair<Expression, GlobalExpr<double>> i in _globals)
             {
                 Expression init = i.Key.Evaluate(t0, 0).Evaluate(Solution.InitialConditions);
                 i.Value.Value = init is Constant ? (double)init : 0.0;
@@ -141,7 +164,7 @@ namespace Circuit
 
             InvalidateProcess();
         }
-          
+
         /// <summary>
         /// Process some samples with this simulation. The Input and Output buffers must match the enumerations provided
         /// at initialization.
@@ -154,16 +177,12 @@ namespace Circuit
             if (process == null)
                 process = DefineProcess();
 
-            // Build parameter list for the processor.
-            object[] parameters = new object[2 + Input.Count() + Output.Count()];
-            int p = 0;
-
             try
             {
                 try
                 {
-                    process(N, n*TimeStep, Input.ToArray(), Output.ToArray());
-                    n += N;
+                    process(N, _n * TimeStep, _state, Input.ToArray(), Output.ToArray());
+                    _n += N;
                 }
                 catch (TargetInvocationException Ex)
                 {
@@ -172,14 +191,14 @@ namespace Circuit
             }
             catch (SimulationDiverged Ex)
             {
-                throw new SimulationDiverged("Simulation diverged near t = " + Quantity.ToString(Time, Units.s) + " + " + Ex.At, n + Ex.At);
+                throw new SimulationDiverged("Simulation diverged near t = " + Quantity.ToString(Time, Units.s) + " + " + Ex.At, _n + Ex.At);
             }
         }
         public void Run(int N, IEnumerable<double[]> Output) { Run(N, new double[][] { }, Output); }
         public void Run(double[] Input, IEnumerable<double[]> Output) { Run(Input.Length, new[] { Input }, Output); }
         public void Run(double[] Input, double[] Output) { Run(Input.Length, new[] { Input }, new[] { Output }); }
 
-        private Func<int, double, double[][], double[][], double> process = null;
+        private Action<int, double, double[], double[][], double[][]> process = null;
         // Rebuild the process function.
         private void InvalidateProcess()
         {
@@ -194,11 +213,11 @@ namespace Circuit
         // The resulting lambda processes N samples, using buffers provided for Input and Output:
         //  void Process(int N, double t0, double T, double[] Input0 ..., double[] Output0 ...)
         //  { ... }
-        private Func<int, double, double[][], double[][], double> DefineProcess()
+        private Action<int, double, double[], double[][], double[][]> DefineProcess()
         {
             // Map expressions to identifiers in the syntax tree.
-            Dictionary<Expression, LinqExpr> inputs = new Dictionary<Expression, LinqExpr>();
-            Dictionary<Expression, LinqExpr> outputs = new Dictionary<Expression, LinqExpr>();
+            var inputs = new List<(Expression Expression, LinqExpr LinqExpression)>();
+            var outputs = new List<(Expression Expression, LinqExpr LinqExpression)>();
 
             // Lambda code generator.
             CodeGen code = new CodeGen();
@@ -207,24 +226,32 @@ namespace Circuit
             ParamExpr SampleCount = code.Decl<int>(Scope.Parameter, "SampleCount");
             ParamExpr t = code.Decl(Scope.Parameter, Simulation.t);
 
+            //global state as array
+            var state = code.Decl<double[]>(Scope.Parameter, "state");
+
             var ins = code.Decl<double[][]>(Scope.Parameter, "ins");
             var outs = code.Decl<double[][]>(Scope.Parameter, "outs");
 
             // Create buffer parameters for each input...
-            for (int i = 0; i < Input.Length; i++)
+            for (int i = 0; i < Inputs.Length; i++)
             {
-                inputs.Add(Input[i], ArrayAccess(ins, Constant(i)));
+                inputs.Add((Inputs[i], ArrayAccess(ins, Constant(i))));
             }
 
             // ... and output.
-            for (int i = 0; i < Output.Length; i++)
+            for (int i = 0; i < Outputs.Length; i++)
             {
-                outputs.Add(Output[i], ArrayAccess(outs, Constant(i)));
+                outputs.Add((Outputs[i], ArrayAccess(outs, Constant(i))));
             }
 
             // Create globals to store previous values of inputs.
-            foreach (Expression i in Input.Distinct())
+            foreach (Expression i in Inputs.Distinct())
+            {
                 AddGlobal(i.Evaluate(t_t0));
+            }
+
+            _state = _globals.Values.Select(g => g.Value).ToArray();
+            _initialState = _state;
 
             // Define lambda body.
 
@@ -234,12 +261,15 @@ namespace Circuit
             // double h = T / Oversample
             var h = Constant(TimeStep / (double)Oversample);
 
-            // Load the globals to local variables and add them to the map.
-            foreach (KeyValuePair<Expression, GlobalExpr<double>> i in globals)
-                code.Add(Assign(code.Decl(i.Key), i.Value));
 
-            foreach (KeyValuePair<Expression, LinqExpr> i in inputs)
-                code.Add(Assign(code.Decl(i.Key), code[i.Key.Evaluate(t_t0)]));
+            // Load the globals to local variables and add them to the map.
+            foreach (var (item, index) in _globals.Select((item, index) => (item, index)))
+            {
+                code[item.Key] = ArrayAccess(state, Constant(index));
+            }
+
+            foreach (var input in inputs)
+                code.Add(Assign(code.Decl(input.Expression), code[input.Expression.Evaluate(t_t0)]));
 
             // Create arrays for linear systems.
             int M = Solution.Solutions.OfType<NewtonIteration>().Max(i => i.Equations.Count(), 0);
@@ -258,11 +288,11 @@ namespace Circuit
                 {
                     // Prepare input samples for oversampling interpolation.
                     Dictionary<Expression, LinqExpr> dVi = new Dictionary<Expression, LinqExpr>();
-                    foreach (Expression i in Input.Distinct())
+                    foreach (Expression i in Inputs.Distinct())
                     {
                         LinqExpr Va = code[i];
                         // Sum all inputs with this key.
-                        IEnumerable<LinqExpr> Vbs = inputs.Where(j => j.Key.Equals(i)).Select(j => j.Value);
+                        IEnumerable<LinqExpr> Vbs = inputs.Where(j => j.Expression.Equals(i)).Select(j => j.LinqExpression);
                         LinqExpr Vb = ArrayAccess(Vbs.First(), n);
                         foreach (LinqExpr j in Vbs.Skip(1))
                             Vb = Add(Vb, ArrayAccess(j, n));
@@ -275,7 +305,7 @@ namespace Circuit
 
                     // Prepare output sample accumulators for low pass filtering.
                     Dictionary<Expression, LinqExpr> Vo = new Dictionary<Expression, LinqExpr>();
-                    foreach (Expression i in Output.Distinct())
+                    foreach (Expression i in Outputs.Distinct())
                         code.Add(Assign(
                             Decl<double>(code, Vo, i, i.ToString().Replace("[t]", "")),
                             Constant(0.0)));
@@ -290,7 +320,7 @@ namespace Circuit
                         code.Add(AddAssign(t, h));
 
                         // Interpolate the input samples.
-                        foreach (Expression i in Input.Distinct())
+                        foreach (Expression i in Inputs.Distinct())
                             code.Add(AddAssign(code[i], dVi[i]));
 
                         // Compile all of the SolutionSets in the solution.
@@ -308,10 +338,12 @@ namespace Circuit
                             {
                                 // Start with the initial guesses from the solution.
                                 foreach (Arrow i in newtonIteration.Guesses)
+                                {
                                     code.DeclInit(i.Left, i.Right);
+                                }
 
                                 // int it = iterations
-                                LinqExpr it = code.ReDeclInit<int>("it", Iterations);
+                                LinqExpr it = code.ReDeclInit("it", Iterations);
                                 // do { ... --it } while(it > 0)
                                 code.DoWhile((Break) =>
                                 {
@@ -319,9 +351,10 @@ namespace Circuit
                                     Solve(code, JxF, newtonIteration.Equations, newtonIteration.UnknownDeltas);
 
                                     // Compile the pre-solved solutions.
-                                    if (newtonIteration.KnownDeltas != null)
-                                        foreach (Arrow i in newtonIteration.KnownDeltas)
-                                            code.DeclInit(i.Left, i.Right);
+                                    foreach (Arrow i in newtonIteration.KnownDeltas ?? Enumerable.Empty<Arrow>())
+                                    {
+                                        code.DeclInit(i.Left, i.Right);
+                                    }
 
                                     // bool done = true
                                     LinqExpr done = code.ReDeclInit("done", true);
@@ -330,8 +363,8 @@ namespace Circuit
                                         LinqExpr v = code[i];
                                         LinqExpr dv = code[NewtonIteration.Delta(i)];
 
-                                        // done &= (|dv| < |v|*epsilon)
-                                        code.Add(AndAssign(done, LessThan(Multiply(Abs(dv), Constant(1e4)), Add(Abs(v), Constant(1e-6)))));
+                                        // done &&= (|dv| < |v|*epsilon)
+                                        code.Add(Assign(done, AndAlso(done, LessThan(Multiply(Abs(dv), Constant(1e4)), Add(Abs(v), Constant(1e-6))))));
                                         // v += dv
                                         code.Add(AddAssign(v, dv));
                                     }
@@ -354,11 +387,11 @@ namespace Circuit
 
                         // Update the previous timestep variables.
                         foreach (SolutionSet S in Solution.Solutions)
-                            foreach (Expression unknown in S.Unknowns.Where(i => globals.Keys.Contains(i.Evaluate(t_t0))))
+                            foreach (Expression unknown in S.Unknowns.Where(i => _globals.Keys.Contains(i.Evaluate(t_t0))))
                                 code.Add(Assign(code[unknown.Evaluate(t_t0)], code[unknown]));
 
                         // Vo += i
-                        foreach (Expression i in Output.Distinct())
+                        foreach (Expression i in Outputs.Distinct())
                         {
                             LinqExpr Voi = Constant(0.0);
                             try
@@ -373,7 +406,7 @@ namespace Circuit
                         }
 
                         // Vi_t0 = Vi
-                        foreach (Expression i in Input.Distinct())
+                        foreach (Expression i in Inputs.Distinct())
                             code.Add(Assign(code[i.Evaluate(t_t0)], code[i]));
 
                         // --ov;
@@ -381,11 +414,11 @@ namespace Circuit
                     }, GreaterThan(ov, zero));
 
                     // Output[i][n] = Vo / Oversample
-                    foreach (KeyValuePair<Expression, LinqExpr> i in outputs)
-                        code.Add(Assign(ArrayAccess(i.Value, n), Multiply(Vo[i.Key], Constant(1.0 / (double)Oversample))));
+                    foreach (var output in outputs)
+                        code.Add(Assign(ArrayAccess(output.LinqExpression, n), Multiply(Vo[output.Expression], Constant(1.0 / Oversample))));
 
                     // Every 256 samples, check for divergence.
-                    if (Vo.Any())
+                    if (Vo.Count > 0)
                     {
                         code.Add(IfThen(Equal(And(n, Constant(0xFF)), zero),
                             Block(Vo.Select(i => IfThenElse(IsNotReal(i.Value),
@@ -395,12 +428,20 @@ namespace Circuit
                 });
 
             // Copy the global state variables back to the globals.
-            code.Add(globals.Select(g => Assign(g.Value, code[g.Key])).ToArray());
+            //foreach (var (item, index) in _globals.Select((item, index) => (item, index)))
+            //{
+            //    code.Add(Assign(ArrayAccess(state, Constant(index)), code[item.Key]));
+            //}
+            // code.Add(_globals.Select(g => Assign(g.Value.Expression, code[g.Key])).ToArray());
 
-            var lambda = code.Build<Func<int, double, double[][], double[][], double>>();
+            var lambda = code.Build<Action<int, double, double[], double[][], double[][]>>();
 
             var str = lambda.ToReadableString();
-
+#if NET472
+            return GetCompiledDelegate(lambda);
+#else
+            return lambda.Compile();
+#endif
 
             //        var da = AppDomain.CurrentDomain.DefineDynamicAssembly(
             //new AssemblyName("dyn"), // call it whatever you want
@@ -419,9 +460,9 @@ namespace Circuit
 
 
 
-            return lambda.Compile();
         }
 
+#if NET472
         public static T GetCompiledDelegate<T>(LinqExprs.Expression<T> expr)
         {
             var assemblyName = new AssemblyName("DelegateHostAssembly") { Version = new Version("1.0.0.0") };
@@ -435,8 +476,10 @@ namespace Circuit
             var methBldr = typeBuilder.DefineMethod("Execute", MethodAttributes.Public | MethodAttributes.Static);
 
             expr.CompileToMethod(methBldr);
-
             Type myType = typeBuilder.CreateType();
+
+            assemblyBuilder.Save("DelegateHostAssembly.dll");
+
 
             var mi = myType.GetMethod("Execute");
 
@@ -446,9 +489,10 @@ namespace Circuit
 
             return (T)foo;
         }
+#endif
 
         // Solve a system of linear equations
-        private static void Solve(CodeGen code, LinqExpr Ab, IEnumerable<LinearCombination> Equations, IEnumerable<Expression> Unknowns)
+        private void Solve(CodeGen code, LinqExpr Ab, IEnumerable<LinearCombination> Equations, IEnumerable<Expression> Unknowns)
         {
             LinearCombination[] eqs = Equations.ToArray();
             Expression[] deltas = Unknowns.ToArray();
@@ -461,9 +505,12 @@ namespace Circuit
             {
                 LinqExpr Abi = code.ReDeclInit<double[]>("Abi", ArrayAccess(Ab, Constant(i)));
                 for (int x = 0; x < N; ++x)
+                {
                     code.Add(Assign(
                         ArrayAccess(Abi, Constant(x)),
                         code.Compile(eqs[i][deltas[x]])));
+                }
+
                 code.Add(Assign(
                     ArrayAccess(Abi, Constant(N)),
                     code.Compile(eqs[i][1])));
@@ -471,8 +518,9 @@ namespace Circuit
 
             // Gaussian elimination on this turd.
             //RowReduce(code, Ab, M, N);
+            var method = _vectorize ? "RowReduceVect" : "RowReduce";
             code.Add(Call(
-                GetMethod<Simulation>("RowReduce", Ab.Type, typeof(int), typeof(int)),
+                GetMethod<Simulation>(method, Ab.Type, typeof(int), typeof(int)),
                 Ab,
                 Constant(M),
                 Constant(N)));
@@ -480,18 +528,17 @@ namespace Circuit
             // Ab is now upper triangular, solve it.
             for (int j = N - 1; j >= 0; --j)
             {
-                LinqExpr _j = Constant(j);
-                LinqExpr Abj = code.ReDeclInit<double[]>("Abj", ArrayAccess(Ab, _j));
+                LinqExpr Abj = code.ReDeclInit<double[]>("Abj", ArrayAccess(Ab, Constant(j)));
 
                 LinqExpr r = ArrayAccess(Abj, Constant(N));
                 for (int ji = j + 1; ji < N; ++ji)
                     r = Add(r, Multiply(ArrayAccess(Abj, Constant(ji)), code[deltas[ji]]));
-                code.DeclInit(deltas[j], Divide(Negate(r), ArrayAccess(Abj, _j)));
+                code.DeclInit(deltas[j], Divide(Negate(r), ArrayAccess(Abj, Constant(j))));
             }
         }
 
         // A human readable implementation of RowReduce.
-        private static void RowReduce(double[][] Ab, int M, int N)
+        public static void RowReduce(double[][] Ab, int M, int N)
         {
             // Solve for dx.
             // For each variable in the system...
@@ -503,9 +550,8 @@ namespace Circuit
                 // Find a pivot row for this variable.
                 for (int i = j + 1; i < M; ++i)
                 {
-                    double[] Abi = Ab[i];
                     // if(|JxF[i][j]| > max) { pi = i, max = |JxF[i][j]| }
-                    double maxj = Math.Abs(Abi[j]);
+                    double maxj = Math.Abs(Ab[i][j]);
                     if (maxj > max)
                     {
                         pi = i;
@@ -516,37 +562,96 @@ namespace Circuit
                 // Swap pivot row with the current row.
                 if (pi != j)
                 {
-                    double[] Abpi = Ab[pi];
-
+                    var tmp = Ab[pi];
                     Ab[pi] = Ab[j];
-                    Ab[j] = Abpi;
+                    Ab[j] = tmp;
                 }
 
                 // Eliminate the rows after the pivot.
                 double p = Ab[j][j];
                 for (int i = j + 1; i < M; ++i)
                 {
-                    double[] Abi = Ab[i];
-                    double s = Abi[j] / p;
-                    if (s != 0.0)
-                        for (int ij = j + 1; ij <= N; ++ij)
-                            Abi[ij] -= Ab[j][ij] * s;
+                    double s = Ab[i][j] / p;
+                    if (s != 0.0d)
+                    {
+                        for (int jj = j + 1; jj <= N; ++jj)
+                        {
+                            Ab[i][jj] -= Ab[j][jj] * s;
+                        }
+                    }
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void RowReduceVect(double[][] Ab, int M, int N)
+        {
+            const double tiny = 0.00001;
+
+            // Solve for dx.
+            // For each variable in the system...
+            for (int j = 0; j + 1 < N; ++j)
+            {
+                int pi = j;
+                double max = Math.Abs(Ab[j][j]);
+
+                // Find a pivot row for this variable.
+                for (int i = j + 1; i < M; ++i)
+                {
+                    // if(|JxF[i][j]| > max) { pi = i, max = |JxF[i][j]| }
+                    double maxj = Math.Abs(Ab[i][j]);
+                    if (maxj > max)
+                    {
+                        pi = i;
+                        max = maxj;
+                    }
+                }
+
+                // Swap pivot row with the current row.
+                if (pi != j)
+                {
+                    var tmp = Ab[pi];
+                    Ab[pi] = Ab[j];
+                    Ab[j] = tmp;
+                }
+
+                var vectorLength = Vector<double>.Count;
+                // Eliminate the rows after the pivot.
+                double p = Ab[j][j];
+                for (int i = j + 1; i < M; ++i)
+                {
+                    double s = Ab[i][j] / p;
+                    if (Math.Abs(s) >= tiny)
+                    {
+                        int jj;
+                        for (jj = j + 1; jj <= (N - vectorLength); jj += vectorLength)
+                        {
+                            var source = new Vector<double>(Ab[j], jj);
+                            var target = new Vector<double>(Ab[i], jj);
+                            var res = target - (source * s);
+                            res.CopyTo(Ab[i], jj);
+                        }
+                        for (; jj <= N; ++jj)
+                        {
+                            Ab[i][jj] -= Ab[j][jj] * s;
+                        }
+                    }
                 }
             }
         }
 
         // Generate code to perform row reduction.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void RowReduce(CodeGen code, LinqExpr Ab, int M, int N)
         {
             // For each variable in the system...
             for (int j = 0; j + 1 < N; ++j)
             {
-                LinqExpr _j = Constant(j);
-                LinqExpr Abj = code.ReDeclInit<double[]>("Abj", ArrayAccess(Ab, _j));
+                LinqExpr Abj = code.ReDeclInit<double[]>("Abj", ArrayAccess(Ab, Constant(j)));
                 // int pi = j
-                LinqExpr pi = code.ReDeclInit<int>("pi", _j);
+                LinqExpr pi = code.ReDeclInit<int>("pi", Constant(j));
                 // double max = |Ab[j][j]|
-                LinqExpr max = code.ReDeclInit<double>("max", Abs(ArrayAccess(Abj, _j)));
+                LinqExpr max = code.ReDeclInit<double>("max", Abs(ArrayAccess(Abj, Constant(j))));
 
                 // Find a pivot row for this variable.
                 //code.For(j + 1, M, _i =>
@@ -556,7 +661,7 @@ namespace Circuit
                     LinqExpr _i = Constant(i);
 
                     // if(|Ab[i][j]| > max) { pi = i, max = |Ab[i][j]| }
-                    LinqExpr maxj = code.ReDeclInit<double>("maxj", Abs(ArrayAccess(ArrayAccess(Ab, _i), _j)));
+                    LinqExpr maxj = code.ReDeclInit<double>("maxj", Abs(ArrayAccess(ArrayAccess(Ab, _i), Constant(j))));
                     code.Add(IfThen(
                         GreaterThan(maxj, max),
                         Block(
@@ -567,7 +672,7 @@ namespace Circuit
                 // (Maybe) swap the pivot row with the current row.
                 LinqExpr Abpi = code.ReDecl<double[]>("Abpi");
                 code.Add(IfThen(
-                    NotEqual(_j, pi), Block(
+                    NotEqual(Constant(j), pi), Block(
                         new[] { Assign(Abpi, ArrayAccess(Ab, pi)) }.Concat(
                         Enumerable.Range(j, N + 1 - j).Select(x => Swap(
                             ArrayAccess(Abj, Constant(x)),
@@ -580,16 +685,15 @@ namespace Circuit
                 //    LinqExpr.Assign(Abj, LinqExpr.ArrayAccess(Ab, _j)))));
 
                 // Eliminate the rows after the pivot.
-                LinqExpr p = code.ReDeclInit<double>("p", ArrayAccess(Abj, _j));
+                LinqExpr p = code.ReDeclInit<double>("p", ArrayAccess(Abj, Constant(j)));
                 //code.For(j + 1, M, _i =>
                 //{
                 for (int i = j + 1; i < M; ++i)
                 {
-                    LinqExpr _i = Constant(i);
-                    LinqExpr Abi = code.ReDeclInit<double[]>("Abi", ArrayAccess(Ab, _i));
+                    LinqExpr Abi = code.ReDeclInit<double[]>("Abi", ArrayAccess(Ab, Constant(i)));
 
                     // s = Ab[i][j] / p
-                    LinqExpr s = code.ReDeclInit<double>("scale", Divide(ArrayAccess(Abi, _j), p));
+                    LinqExpr s = code.ReDeclInit<double>("scale", Divide(ArrayAccess(Abi, Constant(j)), p));
                     // Ab[i] -= Ab[j] * s
                     for (int ji = j + 1; ji < N + 1; ++ji)
                         code.Add(SubtractAssign(
@@ -626,7 +730,7 @@ namespace Circuit
             else
                 throw new NotImplementedException("Constant");
         }
-        
+
         private static void Swap(ref double a, ref double b) { double t = a; a = b; b = t; }
 
         // Get a method of T with the given name/param types.

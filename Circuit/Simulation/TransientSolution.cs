@@ -156,7 +156,7 @@ namespace Circuit
                 if (F.Unknowns.Any())
                 {
                     // The variables of this system are the newton iteration updates.
-                    List<Expression> dy = F.Unknowns.Select(i => NewtonIteration.Delta(i)).ToList();
+                    List<Expression> dy = F.Unknowns.Select(NewtonIteration.Delta).ToList();
                     
                     // Compute JxF*dy + F(y0) == 0.
                     SystemOfEquations nonlinear = new SystemOfEquations(

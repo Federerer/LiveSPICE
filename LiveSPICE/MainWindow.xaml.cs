@@ -15,8 +15,8 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using System.Xml;
-using Xceed.Wpf.AvalonDock.Layout;
 using Microsoft.Win32;
+using AvalonDock.Layout;
 
 namespace LiveSPICE
 {

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -6,10 +6,13 @@ using System.Text;
 using System.Reflection;
 using ComputerAlgebra;
 using ComputerAlgebra.LinqCompiler;
-using ComputerAlgebra.Plotting;
 using Circuit;
 using Util;
 using System.Diagnostics;
+using ComputerAlgebra.Plotting;
+using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Running;
+using BenchmarkDotNet.Jobs;
 
 // Filter design tool: http://sim.okawa-denshi.jp/en/CRtool.php
 
@@ -21,11 +24,11 @@ namespace Tests
 
         public int SampleRate = 44100;
         public int Samples = 100000;
-        public int Oversample = 8;
+        public int Oversample = 4;
         public int Iterations = 8;
 
-        private double analysisTime = 0.0;
-        private double simulateTime = 0.0;
+        private double _analysisTime;
+        private double _simulateTime;
 
         public Log Log = new ConsoleLog() { Verbosity = MessageType.Info };
 
@@ -53,7 +56,7 @@ namespace Tests
                 }
             }
 
-            Log.WriteLine("Analyze/Simulate {0}/{1}", analysisTime, simulateTime);
+            Log.WriteLine("Analyze/Simulate {0}/{1}", _analysisTime, _simulateTime);
 
             Log.WriteLine("{0} succeeded:", performance.Count);
             foreach (string i in performance)
@@ -66,8 +69,8 @@ namespace Tests
 
         public double Run(string FileName, Func<double, double> Vin)
         {
-            Circuit.Circuit C = Schematic.Load(FileName, Log).Build();
-            C.Name = System.IO.Path.GetFileNameWithoutExtension(FileName);
+            var C = Schematic.Load(FileName, Log).Build();
+            C.Name = Path.GetFileNameWithoutExtension(FileName);
             return Run(
                 C,
                 Vin,
@@ -88,30 +91,30 @@ namespace Tests
             var sw = Stopwatch.StartNew();
 
             Analysis analysis = C.Analyze();
-            TransientSolution TS = TransientSolution.Solve(analysis, (Real)1 / (SampleRate * Oversample), Log);
+            var transientSolution = TransientSolution.Solve(analysis, (Real)1 / (SampleRate * Oversample), Log);
 
-            analysisTime += sw.ElapsedMilliseconds;
+            _analysisTime += sw.Elapsed.TotalSeconds;
 
-            Simulation S = new Simulation(TS) 
-            { 
+            Simulation S = new Simulation(transientSolution)
+            {
                 Oversample = Oversample, 
                 Iterations = Iterations,
                 Log = Log, 
-                Input = new[] { Input },
-                Output = Plots.ToArray(),
+                Inputs = new[] { Input },
+                Outputs = Plots.ToArray(),
             };
 
             Log.WriteLine("");
             return Samples > 0
                 ? RunTest(
-                    C, S,
+                    S,
                     Vin,
                     Samples,
                     C.Name)
                 : 0.0;
         }
 
-        public double RunTest(Circuit.Circuit C, Simulation S, Func<double, double> Vin, int Samples, string Name)
+        public double RunTest(Simulation S, Func<double, double> Vin, int Samples, string Name)
         {
             double t0 = (double)S.Time;
             double T = S.TimeStep;
@@ -119,8 +122,8 @@ namespace Tests
             int N = 353;
             double[] input = new double[N];
 
-            List<List<double>> output = S.Output.Select(i => new List<double>(Samples)).ToList();
-            List<double[]> buffers = S.Output.Select(i => new double[N]).ToList();
+            List<List<double>> output = S.Outputs.Select(i => new List<double>(Samples)).ToList();
+            List<double[]> buffers = S.Outputs.Select(_ => new double[N]).ToList();
             
             double time = 0.0;
             int samples = 0;
@@ -134,10 +137,10 @@ namespace Tests
                 S.Run(input, buffers);
                 time += sw.Elapsed.TotalSeconds;
 
-                for (int i = 0; i < S.Output.Count(); ++i)
+                for (int i = 0; i < S.Outputs.Count(); ++i)
                     output[i].AddRange(buffers[i]);
             }
-            simulateTime += time;
+            _simulateTime += time;
 
             int t1 = Math.Min(samples, 4000);
 
@@ -156,9 +159,83 @@ namespace Tests
 
             p.Series.AddRange(output.Select((i, j) => new Scatter(
                 i.Take(t1)
-                .Select((k, n) => new KeyValuePair<double, double>(n * T, k)).ToArray()) { Name = S.Output.ElementAt(j).ToString() }));
+                .Select((k, n) => new KeyValuePair<double, double>(n * T, k)).ToArray()) { Name = S.Outputs.ElementAt(j).ToString() }));
             return samples / time;
         }
+    }
+
+    //[SimpleJob(RuntimeMoniker.Net472)]
+    [SimpleJob(RuntimeMoniker.NetCoreApp31)]
+    [MemoryDiagnoser]
+    public class Benchmark
+    {
+        public Log Log = new ConsoleLog() { Verbosity = MessageType.Info };
+        private double[] _input;
+        private double[][] _buffers;
+
+        //[Params(true, false)]
+        public bool Vectorize { get; set; }
+
+        public Simulation S { get; private set; }
+
+        [IterationSetup]
+        public void Setup()
+        {
+            Console.Write(Directory.GetCurrentDirectory());
+            var file = Directory.EnumerateFiles("./Circuits", "*.schx").First();
+            var C = Schematic.Load(file, Log).Build();
+
+            double Harmonics(double t, double A, double f0, int N)
+            {
+                double s = 0;
+                for (int i = 1; i <= N; ++i)
+                    s += Math.Sin(t * f0 * 2 * 3.1415 * i) / N;
+                return A * s;
+            }
+
+            Func<double,double> inputFun = time => Harmonics(time, 0.5, 82, 2);
+
+            const int sampleRate = 44100;
+            const int oversample = 4;
+            const int iterations = 8;
+
+            Analysis analysis = C.Analyze();
+            var transientSolution = TransientSolution.Solve(analysis, (Real)1 / (sampleRate * oversample), Log);
+
+            S = new Simulation(transientSolution, Vectorize)
+            {
+                Oversample = oversample,
+                Iterations = iterations,
+                Log = Log,
+                Inputs = new[] { C.Components.OfType<Input>().Select(i => Expression.Parse(i.Name + "[t]")).DefaultIfEmpty("V[t]").SingleOrDefault() },
+                Outputs = C.Nodes.Select(i => i.V).ToArray()
+            };
+
+
+            _input = Enumerable.Range(0, 10000).Select(i => inputFun(i * S.TimeStep)).ToArray();
+            _buffers = S.Outputs.Select(_ => new double[10000]).ToArray();
+
+        }
+
+        [Benchmark(Baseline = true)]
+        public void TestPerformance()
+        {
+            S.Run(_input, _buffers);
+        }
+    }
+
+    [SimpleJob(RuntimeMoniker.Net472)]
+    [SimpleJob(RuntimeMoniker.NetCoreApp31)]
+    public class Powers
+    {
+        [Benchmark(Baseline = true)]
+        public double StandardPower() => Math.Pow(1.1d, 2.2d);
+
+        [Benchmark]
+        public double StandardMathPower() => StandardMath.Pow(1.1d, 2.2d);
+
+        [Benchmark]
+        public double LogPower() => Math.Exp(Math.Log(1.1d) * 2.2d);
     }
 
     class Program
@@ -212,14 +289,15 @@ namespace Tests
 
         static void Main(string[] args)
         {
+            BenchmarkRunner.Run<Powers>();
             //WriteDocs();
 
-            Tester tests = new Tester();
-            tests.Run(System.IO.Directory.EnumerateFiles(@".", "*.schx"), t => Harmonics(t, 0.5, 82, 2));
+            //Tester tests = new Tester();
+            //tests.Run(System.IO.Directory.EnumerateFiles(@".", "*.schx"), t => Harmonics(t, 0.5, 82, 2));
         }
 
         // Generate a function with the first N harmonics of f0.
-        private static double Harmonics(double t, double A, double f0, int N)
+        static double Harmonics(double t, double A, double f0, int N)
         {
             double s = 0;
             for (int i = 1; i <= N; ++i)

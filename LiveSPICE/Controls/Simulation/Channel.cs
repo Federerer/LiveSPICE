@@ -16,6 +16,7 @@ using System.Windows.Navigation;
 using System.Windows.Shapes;
 using ComputerAlgebra;
 using ComputerAlgebra.LinqCompiler;
+using SignalProcessing;
 
 namespace LiveSPICE
 {
@@ -32,7 +33,7 @@ namespace LiveSPICE
 
         private Brush signalStatus = Brushes.Transparent;
         public Brush SignalStatus { get { return signalStatus; } set { signalStatus = value; NotifyChanged("SignalStatus"); } }
-        
+
         // INotifyPropertyChanged.
         protected void NotifyChanged(string p)
         {
@@ -69,7 +70,7 @@ namespace LiveSPICE
                 buffer[i] = signal(t);
             return buffer;
         }
-        
+
         public SignalChannel(ComputerAlgebra.Expression Signal)
         {
             signal = Signal.Compile<Func<double, double>>(Circuit.Component.t);
@@ -85,8 +86,26 @@ namespace LiveSPICE
         public int Index { get { return index; } }
 
         private ComputerAlgebra.Expression signal = 0;
-        public ComputerAlgebra.Expression Signal { get { return signal; } set { signal = value; NotifyChanged("Signal"); } }
+        private FIRFilter _filter;
+        private bool _filterEnabled = true;
 
-        public OutputChannel(int Index) { index = Index; }
+        public ComputerAlgebra.Expression Signal { get { return signal; } set { signal = value; NotifyChanged("Signal"); } }
+        public bool FilterEnabled { get { return _filterEnabled; } set { _filterEnabled = value; NotifyChanged(nameof(FilterEnabled)); } }
+
+        public FIRFilter Filter { get => _filter; set { _filter = value; NotifyChanged(nameof(Filter)); } }
+
+        public OutputChannel(int Index)
+        {
+            index = Index;
+
+            double[] impulseL = null;
+
+            var wavFile = new WavFile("orange_2_mics.wav");
+
+            wavFile.readData(ref impulseL);
+
+            Filter = new FIRFilter(impulseL);
+        }
+
     }
 }
