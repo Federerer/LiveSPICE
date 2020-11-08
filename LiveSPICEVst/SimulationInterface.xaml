@@ -36,12 +36,12 @@
                                                 <StackPanel>
                                                     <local:Dial x:Name="ParameterDial"
                                                         Minimum="0" Maximum="1" Value="{Binding PotValue}"
-                                                        Margin="2,2,2,0"/>
-                                                    <Popup PlacementTarget="{Binding ElementName=ParameterDial}" Placement="Center" VerticalOffset="25"
+                                                        Margin="5"/>
+                                                    <Popup PlacementTarget="{Binding ElementName=ParameterDial}" Placement="Bottom" VerticalOffset="5"
                                                             IsOpen="{Binding IsMouseCaptured, ElementName=ParameterDial, Mode=OneWay}"
                                                             AllowsTransparency = "True" PopupAnimation = "Fade">
-                                                        <Border Background="White" BorderBrush="Gray" BorderThickness="1">
-                                                            <TextBlock Text="{Binding PotValue}" Margin="2"/>
+                                                        <Border Background="White" BorderBrush="Gray" BorderThickness="1" Padding="5,0">
+                                                            <TextBlock Text="{Binding PotValue, StringFormat=F2}" Margin="2"/>
                                                         </Border>
                                                     </Popup>
                                                 </StackPanel>

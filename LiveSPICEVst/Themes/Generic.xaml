@@ -10,29 +10,30 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type local:Dial}">
-                    <Viewbox Width="32" Height="32">
-                        <Grid>
-                            <Image Name="BackgroundImage" Source="pack://application:,,,/LiveSpiceVst;component/Images/DialBackground.png" Width="21" Height="21"/>
-                            <Image Name="PointerImage" Source="pack://application:,,,/LiveSpiceVst;component/Images/DialPointer.png" Width="21" Height="21">
-                                <Image.RenderTransform>
-                                    <RotateTransform CenterX="10.5" CenterY="10.5">
-                                        <RotateTransform.Angle>
-                                            <MultiBinding Converter="{StaticResource DialToAngleConverter}">
-                                                <Binding RelativeSource="{RelativeSource TemplatedParent}" />
-                                                <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="Value" />
-                                            </MultiBinding>
-                                        </RotateTransform.Angle>
-                                    </RotateTransform>
-                                </Image.RenderTransform>
-                            </Image>
-                        </Grid>
-                    </Viewbox>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="IsEnabled" Value="false">
-                            <Setter Property="Opacity" TargetName="BackgroundImage" Value="0.25"/>
-                            <Setter Property="Opacity" TargetName="PointerImage" Value="0.25"/>
-                        </Trigger>
-                    </ControlTemplate.Triggers>
+                    <Grid>
+                        <Ellipse Width="40" Height="40">
+                            <Ellipse.Fill>
+                                <RadialGradientBrush GradientOrigin=".3,.3" RadiusX=".7" RadiusY=".7">
+                                    <GradientBrush.GradientStops>
+                                        <GradientStop Color="#333" Offset="0"/>
+                                        <GradientStop Color="Black" Offset="1"/>
+                                    </GradientBrush.GradientStops>
+                                </RadialGradientBrush>
+                            </Ellipse.Fill>
+                        </Ellipse>
+                        <Line X1="20" X2="20" Y1="16" Y2="5" StrokeThickness="3" StrokeEndLineCap="Round" StrokeStartLineCap="Round" Stroke="White">
+                            <Line.RenderTransform>
+                                <RotateTransform CenterX="20" CenterY="20">
+                                    <RotateTransform.Angle>
+                                        <MultiBinding Converter="{StaticResource DialToAngleConverter}">
+                                            <Binding RelativeSource="{RelativeSource TemplatedParent}" />
+                                            <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="Value" />
+                                        </MultiBinding>
+                                    </RotateTransform.Angle>
+                                </RotateTransform>
+                            </Line.RenderTransform>
+                        </Line>
+                    </Grid>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
